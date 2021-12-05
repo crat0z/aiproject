@@ -92,22 +92,8 @@ class game:
 
         pygame.display.flip()
 
-    def game_tick(self):
-        next_direction = self.current_direction
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                sys.exit()
-            if event.type == pygame.KEYDOWN:
-                # keys up, down, left, right
-                if event.key == pygame.K_w:
-                    next_direction = direction.UP
-                if event.key == pygame.K_s:
-                    next_direction = direction.DOWN
-                if event.key == pygame.K_a:
-                    next_direction = direction.LEFT
-                if event.key == pygame.K_d:
-                    next_direction = direction.RIGHT
-
+    def game_tick(self, action: direction):
+        next_direction = action
         # make sure we aren't turning around
         if next_direction == direction.UP and self.current_direction != direction.DOWN:
             self.current_direction = direction.UP
@@ -153,8 +139,9 @@ class game:
 
         self.clock.tick(20)
 
+        return self.state
+
     def fill_state(self):
-        # update our state now
         self.state.fill(0)
 
         for part in self.player.body:
