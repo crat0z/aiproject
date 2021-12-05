@@ -118,8 +118,9 @@ class game:
         for part in self.player.body[1:]:
             if head == part:
                 game_over = True
-            if head == self.food:
-                eat = True
+
+        if head == self.food:
+            eat = True
 
         # new game if we've died
         if game_over:
@@ -134,12 +135,8 @@ class game:
 
         self.fill_state()
 
-        # finally, draw
-        self.draw_game()
-
-        self.clock.tick(20)
-
-        return self.state
+        # return a tuple of state, whether the game just ended, and if we ate food
+        return (self.state, game_over, eat)
 
     def fill_state(self):
         self.state.fill(0)
@@ -151,6 +148,28 @@ class game:
         self.state[head.x][head.y] = cell.HEAD.value
 
         self.state[self.food.x][self.food.y] = cell.FOOD.value
+
+    def play_game_tick(self):
+        # get input
+        next_direction = self.current_direction
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                exit(0)
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_w:
+                    next_direction = direction.UP
+                elif event.key == pygame.K_a:
+                    next_direction = direction.LEFT
+                elif event.key == pygame.K_s:
+                    next_direction = direction.DOWN
+                elif event.key == pygame.K_e:
+                    next_direction = direction.RIGHT
+
+        self.game_tick(next_direction)
+
+        self.draw_game()
+
+        self.clock.tick(20)
 
     def new_game(self):
         self.player.restart()
@@ -172,7 +191,7 @@ def main():
     g = game()
 
     while True:
-        g.game_tick()
+        g.play_game_tick()
 
 
 if __name__ == "__main__":
