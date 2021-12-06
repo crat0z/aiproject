@@ -74,7 +74,7 @@ class game:
         self.food = rect(0, 0)
         self.screen = pygame.display.set_mode(size)
         self.player = player()
-        self.current_direction = direction.RIGHT
+        self.current_direction = direction.DOWN
         self.clock = pygame.time.Clock()
 
         # call new_game() so state is not zero
@@ -141,13 +141,12 @@ class game:
 
         # calculate reward
         if game_over:
-            reward = -10
+            reward = -5
         elif eat:
-            reward = 25
+            reward = 100
         else:
             reward = 0
 
-        # return a tuple of state, whether the game just ended, and if we ate food
         return reward
 
     def fill_state(self):
@@ -186,8 +185,7 @@ class game:
     def new_game(self):
         self.player.restart()
         self.new_food()
-        self.current_direction = direction.RIGHT
-        self.fill_state()
+        self.current_direction = direction.DOWN
 
     def new_food(self):
 

@@ -3,10 +3,10 @@ import torch.nn as nn
 
 import os
 
-# game is 32 x 32 grid
+# game is 16 x 16 grid
 input_size = 16 * 16
 # this will probably need changes
-hidden_size = input_size * 16
+hidden_size = input_size * input_size
 # whether to go up/down/left/right. this might need to also be changed
 # to forward, left, right, since going "backwards" is not a valid move ever
 output_size = 3
@@ -29,3 +29,4 @@ class Model(torch.nn.Module):
 
         file = os.path.join(folder, file_name)
         torch.save(self.state_dict(), file)
+        # might be worth it to save optimizer here too

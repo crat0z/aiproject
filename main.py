@@ -7,7 +7,7 @@ def main():
     a = agent.Agent()
 
     pygame.init()
-    pygame.display.list_modes()
+    print(pygame.display.list_modes())
     torch.autograd.set_detect_anomaly(True)
     while True:
         for event in pygame.event.get():

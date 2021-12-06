@@ -9,17 +9,17 @@ import snake
 # hyperparameters
 max_memory = 10000
 # initial epsilon, if rand() < epsilon, a random action is taken
-e_initial = 0.75
+e_initial = 0.99
 # final epsilon value
-e_final = 0.02
+e_final = 0.05
 # number of iterations between e_initial and e_end
 e_iterations = 10000
 # discounted
 gamma = 0.95
 # memory batch size
-batch_size = 64
+batch_size = 128
 # learning rate
-learning_rate = 0.0001
+learning_rate = 0.00005
 
 # epsilon difference per iteration
 e_diff = (e_initial - e_final)/e_iterations
@@ -27,17 +27,21 @@ e_diff = (e_initial - e_final)/e_iterations
 Transition = namedtuple(
     'Transition', ('before_state', 'action', 'after_state', 'reward', 'terminal'))
 
-device = torch.device('cpu')
+device = torch.device('cuda')
 
 
 class Memory:
     def __init__(self):
         self.memory = deque([], maxlen=max_memory)
 
-    def push(self, t):
-        self.memory.append(t)
+    def push(self, before, act, after, rew, term):
+        self.memory.append(Transition(before, act, after, rew, term))
 
+    # not zipping this right here is super super slow..
     def sample(self):
+        return zip(*random.sample(self.memory, batch_size))
+
+    def old_sample(self):
         return random.sample(self.memory, batch_size)
 
     def __len__(self):
@@ -146,21 +150,28 @@ class Agent:
             return
 
         # random sample from memory
-        before, action, after, reward, terminal = zip(*self.memory.sample())
+        before, action, after, reward, terminal = self.memory.sample()
 
+        # before,after are [batch_size][input_size]
         before_state_batch = torch.stack(before).to(device=device)
-        action_batch = torch.stack(action).to(device=device)
         after_state_batch = torch.stack(after).to(device=device)
+
+        # action is [batch_size][output_size]
+        action_batch = torch.stack(action).to(device=device)
+
+        # reward,terminal are [batch_size]
         reward_batch = torch.tensor(reward).to(device=device)
         terminal_batch = torch.tensor(terminal).to(device=device)
 
         # q_before is [batch_size][output_size]
         q_before = self.model(before_state_batch).to(device=device)
+        q_after = self.model(after_state_batch).to(device=device)
 
         y_batch = q_before.clone()
+        # Q(s,a) = r(s, a) + gamma * Q(s', a')
         for i in range(batch_size):
             y_batch[i][torch.argmax(action_batch[i]).item(
-            )] = reward_batch[i] if terminal_batch[i] else reward_batch[i] + self.gamma * torch.max(self.model(after_state_batch[i]))
+            )] = reward_batch[i] if terminal_batch[i] else reward_batch[i] + self.gamma * torch.max(q_after[i])
 
         self.optimizer.zero_grad()
 
@@ -172,13 +183,11 @@ class Agent:
     def step(self):
         self.current_step += 1
 
-        # get the array, current direction
-        before_state_np = self.game.state
         before_direction = self.game.current_direction
 
-        # transform it into a tensor which a consistent orientation
+        # transform game state into a tensor with a consistent orientation
         before_state_tensor = self.normalize_np_into_tensor(
-            before_state_np, before_direction)
+            self.game.state, before_direction)
 
         # get our action tensor, either random tensor or output from model
         action_tensor = self.get_action(before_state_tensor)
@@ -189,15 +198,11 @@ class Agent:
         # step once in the game, and get our reward
         reward = self.game.game_tick(action)
 
-        # get after state
-        after_state_np = self.game.state
-        after_direction = self.game.current_direction
+        # get next state tensor
         after_state_tensor = self.normalize_np_into_tensor(
-            after_state_np, after_direction)
+            self.game.state, self.game.current_direction)
 
-        terminal = True if reward == -5 else False
+        terminal = True if reward < 0 else False
 
-        td = Transition(before_state=before_state_tensor, action=action_tensor,
-                        after_state=after_state_tensor, reward=reward, terminal=terminal)
-
-        self.memory.push(td)
+        self.memory.push(before_state_tensor, action_tensor,
+                         after_state_tensor, reward, terminal)
