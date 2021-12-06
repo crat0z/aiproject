@@ -29,7 +29,3 @@ class Model(torch.nn.Module):
 
         file = os.path.join(folder, file_name)
         torch.save(self.state_dict(), file)
-
-
-model = Model().to("cpu")
-print(model)

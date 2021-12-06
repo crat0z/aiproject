@@ -70,7 +70,7 @@ class player:
 
 class game:
     def __init__(self):
-        self.state = np.zeros((grid_size, grid_size), dtype=int)
+        self.state = np.zeros((grid_size, grid_size), dtype=np.float32)
         self.food = rect(0, 0)
         self.screen = pygame.display.set_mode(size)
         self.player = player()
@@ -141,9 +141,9 @@ class game:
 
         # calculate reward
         if game_over:
-            reward = -5
+            reward = -10
         elif eat:
-            reward = 1
+            reward = 25
         else:
             reward = 0
 
@@ -197,15 +197,3 @@ class game:
             if part == self.food:
                 self.new_food()
                 return
-
-
-def main():
-    pygame.init()
-    g = game()
-
-    while True:
-        g.play_game_tick()
-
-
-if __name__ == "__main__":
-    main()
