@@ -4,19 +4,19 @@ import torch.nn as nn
 import os
 
 # game is 32 x 32 grid
-input_size = 32 * 32
+input_size = 16 * 16
 # this will probably need changes
-hidden_size = input_size * 4
+hidden_size = input_size * 16
 # whether to go up/down/left/right. this might need to also be changed
 # to forward, left, right, since going "backwards" is not a valid move ever
-output_size = 4
+output_size = 3
 
 
 class Model(torch.nn.Module):
     def __init__(self):
         super(Model, self).__init__()
         self.layers = nn.Sequential(
-            nn.Linear(input_size, hidden_size), nn.ReLU(), nn.Linear(hidden_size, output_size))
+            nn.Linear(input_size, hidden_size), nn.ReLU(), nn.Linear(hidden_size, input_size), nn.ReLU(), nn.Linear(input_size, output_size))
 
     def forward(self, x):
         return self.layers(x)

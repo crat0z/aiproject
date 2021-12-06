@@ -7,7 +7,7 @@ import numpy as np
 # globals because lazy
 # game is 32 x 32 rectangles
 size = width, height = 800, 800
-rect_size = 25
+rect_size = 50
 grid_size = int(width / rect_size)
 
 black = 0, 0, 0
@@ -48,7 +48,7 @@ class player:
         self.restart()
 
     def restart(self):
-        self.body = [rect(16, 16), rect(16, 15), rect(16, 14)]
+        self.body = [rect(8, 8), rect(8, 7), rect(8, 6), rect(8, 5)]
 
     # head is always first element of body
     def head(self) -> rect:
@@ -190,10 +190,16 @@ class game:
         self.fill_state()
 
     def new_food(self):
-        self.food = rect(random.randint(0, grid_size - 1),
-                         random.randint(0, grid_size - 1))
-        # check to make sure our snake isn't on this point
-        for part in self.player.body:
-            if part == self.food:
-                self.new_food()
+
+        while True:
+            done = True
+            location = rect(random.randint(0, grid_size - 1),
+                            random.randint(0, grid_size - 1))
+            for part in self.player.body:
+                if part == location:
+                    done = False
+                    break
+
+            if done:
+                self.food = location
                 return
