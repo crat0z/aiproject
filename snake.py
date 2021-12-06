@@ -69,12 +69,16 @@ class player:
 
 
 class game:
-    state = np.zeros((grid_size, grid_size), dtype=int)
-    food = rect(0, 0)
-    screen = pygame.display.set_mode(size)
-    player = player()
-    current_direction = direction.RIGHT
-    clock = pygame.time.Clock()
+    def __init__(self):
+        self.state = np.zeros((grid_size, grid_size), dtype=int)
+        self.food = rect(0, 0)
+        self.screen = pygame.display.set_mode(size)
+        self.player = player()
+        self.current_direction = direction.RIGHT
+        self.clock = pygame.time.Clock()
+
+        # call new_game() so state is not zero
+        self.new_game()
 
     def draw_game(self):
         self.screen.fill(black)
@@ -135,8 +139,16 @@ class game:
 
         self.fill_state()
 
+        # calculate reward
+        if game_over:
+            reward = -5
+        elif eat:
+            reward = 1
+        else:
+            reward = 0
+
         # return a tuple of state, whether the game just ended, and if we ate food
-        return (self.state, game_over, eat)
+        return reward
 
     def fill_state(self):
         self.state.fill(0)
@@ -175,6 +187,7 @@ class game:
         self.player.restart()
         self.new_food()
         self.current_direction = direction.RIGHT
+        self.fill_state()
 
     def new_food(self):
         self.food = rect(random.randint(0, grid_size - 1),
