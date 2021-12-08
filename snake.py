@@ -1,13 +1,12 @@
 import pygame
-import sys
 import random
 from enum import Enum
 import numpy as np
 
 # globals because lazy
 # game is 32 x 32 rectangles
-size = width, height = 800, 800
-rect_size = 50
+size = width, height = 900, 900
+rect_size = 60
 grid_size = int(width / rect_size)
 
 black = 0, 0, 0
@@ -23,10 +22,10 @@ class direction(Enum):
 
 
 class cell(Enum):
-    BG = 0
-    SNAKE = 1
-    HEAD = 2
-    FOOD = 3
+    SNAKE = 0.0
+    BG = 1.0
+    HEAD = 2.0
+    FOOD = 3.0
 
 
 class rect:
@@ -44,11 +43,14 @@ class rect:
 class player:
     body = []
 
+    def __len__(self):
+        return len(self.body)
+
     def __init__(self):
         self.restart()
 
     def restart(self):
-        self.body = [rect(8, 8), rect(8, 7), rect(8, 6), rect(8, 5)]
+        self.body = [rect(8, 8), rect(8, 7), rect(8, 6)]
 
     # head is always first element of body
     def head(self) -> rect:
@@ -141,16 +143,16 @@ class game:
 
         # calculate reward
         if game_over:
-            reward = -5
+            reward = -1
         elif eat:
-            reward = 100
+            reward = 1
         else:
             reward = 0
 
         return reward
 
     def fill_state(self):
-        self.state.fill(0)
+        self.state.fill(cell.BG.value)
 
         for part in self.player.body:
             self.state[part.x][part.y] = cell.SNAKE.value
