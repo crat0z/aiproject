@@ -1,4 +1,5 @@
 from collections import deque, namedtuple
+from datetime import datetime
 import random
 import numpy as np
 import os
@@ -11,27 +12,25 @@ import pygame
 Transition = namedtuple(
     'Transition', ('before_state', 'action', 'after_state', 'reward', 'terminal'))
 
-device = torch.device('cuda')
-
 
 class Memory:
     def __init__(self, max_mem):
         self.memory = deque([], maxlen=max_mem)
 
-    def push(self, before, act, after, rew, term):
-        self.memory.append(Transition(before, act, after, rew, term))
+    def push(self, *args):
+        self.memory.append(Transition(*args))
 
-    # not zipping this right here is slower
     def sample(self, batch_size):
-        return zip(*random.sample(self.memory, batch_size))
+        return random.sample(self.memory, batch_size)
 
     def __len__(self):
         return len(self.memory)
 
 
 class Agent:
-    def __init__(self, e_init=0, e_final=0, e_iter=0, b_size=0, lr=0, gamma=0, max_mem=0, save_every=0):
-        self.model = model.Model().to(device=device)
+    def __init__(self, e_init=0, e_final=0, e_iter=0, b_size=0, lr=0, gamma=0, max_mem=0, save_every=0, device="cpu"):
+        self.device = device
+        self.model = model.Model().to(device=self.device)
         self.memory = Memory(max_mem=max_mem)
         self.game = snake.game()
 
@@ -58,18 +57,44 @@ class Agent:
         self.optimizer = torch.optim.Adam(
             self.model.parameters(), lr=self.lr)
         self.criterion = torch.nn.MSELoss()
+        self.training = False
 
         for param in self.model.parameters():
             param.requires_grad = True
+
+    # this function handles statistics when games are over, or model is being saved
+    def update_statistics(self, reward: int):
+        if reward > 0:
+            self.food_eaten += 1
+            self.length_this_game += 1
+        elif reward < 0:
+            self.games_played += 1
+            self.total_length += self.length_this_game
+            # calculate average now
+            self.average_length = self.total_length / self.games_played
+            # check if this is a new record
+            if self.length_this_game > self.max_length:
+                self.max_length = self.length_this_game
+            # reset current length
+            self.length_this_game = len(self.game.player)
+
+    # reset statistics, either between games or between saves while training
+    def reset_statistics(self):
+        self.games_played = 0
+        self.food_eaten = 0
+        self.total_length = 0
+        self.length_this_game = 0
+        self.average_length = 0
+        self.max_length = 0
 
     def get_action(self, state) -> torch.Tensor:
         r = random.random()
         if r < self.epsilon:
             # return random tensor
-            ret = torch.rand(3, dtype=torch.float32).to(device=device)
+            ret = torch.rand(4, dtype=torch.float32).to(device=self.device)
         else:
             with torch.no_grad():
-                ret = torch.squeeze(self.model(state)).to(device=device)
+                ret = torch.squeeze(self.model(state)).to(device=self.device)
 
         # decrease epsilon if we are still above e_final
         if self.epsilon > self.epsilon_final:
@@ -78,46 +103,52 @@ class Agent:
 
         return ret
 
-    def normalize_np_into_tensor(self, input: np.ndarray) -> torch.Tensor:
+    def normalize_np_into_tensor(self, inp: np.ndarray) -> torch.Tensor:
         # maybe this is better, idk
-        input = np.reshape(input, (1, 1, 15, 15))
-        return torch.from_numpy(input).to(device=device)
+        out = torch.from_numpy(np.copy(inp)).to(device=self.device)
+        out = torch.reshape(out, (1, 1, 84, 84))
+        return out
 
     def action_tensor_to_index(self, t: torch.Tensor) -> int:
         return torch.argmax(t).item()
 
-    def tensor_to_action(self, t: torch.Tensor, current_direction: snake.direction) -> snake.direction:
-        index = self.action_tensor_to_index(t)
-        # if arg == 1, then just return current_direction
-        if index == 1:
-            return current_direction
-        else:
-            # i wish python had switch statements
-            # if we're going left
-            if index == 0:
-                if current_direction == snake.direction.UP:
-                    return snake.direction.LEFT
-                if current_direction == snake.direction.DOWN:
-                    return snake.direction.RIGHT
-                if current_direction == snake.direction.LEFT:
-                    return snake.direction.DOWN
-                if current_direction == snake.direction.RIGHT:
-                    return snake.direction.UP
-            else:  # if we're going right
-                if current_direction == snake.direction.UP:
-                    return snake.direction.RIGHT
-                if current_direction == snake.direction.DOWN:
-                    return snake.direction.LEFT
-                if current_direction == snake.direction.LEFT:
-                    return snake.direction.UP
-                if current_direction == snake.direction.RIGHT:
-                    return snake.direction.DOWN
+    def index_into_direction(self, index: int) -> snake.direction:
+        if index == 0:
+            return snake.direction.LEFT
+        elif index == 1:
+            return snake.direction.UP
+        elif index == 2:
+            return snake.direction.RIGHT
+        elif index == 3:
+            return snake.direction.DOWN
 
     def train_step(self):
-        self.step()
+        self.training_step()
         self.optimizer_step()
 
+    def play(self):
+        play_steps = 0
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    exit()
+            play_steps += 1
+            reward = self.play_step()
+            self.game.draw_game()
+            terminal = False if reward >= 0 else True
+
+            # if we just died, print stats about this run
+            if terminal:
+                print(f"steps: {play_steps}, length: {self.length_this_game}")
+                play_steps = 0
+                self.reset_statistics()
+            else:
+                self.update_statistics(reward)
+
+            self.game.clock.tick(20)
+
     def train(self, draw=True):
+
         if draw:
             pygame.init()
         while True:
@@ -126,15 +157,27 @@ class Agent:
                     if event.type == pygame.QUIT:
                         exit()
 
-            self.train_step()
+            terminal = self.train_step()
 
             if (draw):
                 self.game.draw_game()
+            # if we are saving this iteration
             if self.current_step % self.save_every == 0:
+                # if we just died, don't "forcefully" end the game
+                if not terminal:
+                    self.update_statistics(-1)
+
+                # save everything
                 self.save()
+                now = datetime.now()
+                current_time = now.strftime("%H:%M:%S")
                 print(
-                    f"step {self.current_step}: games_played = {self.games_played}, food_eaten = {self.food_eaten}, " +
-                    f"average_length = {self.average_length}, max_length = {self.max_length}")
+                    f"{current_time}: step={self.current_step}, games_played={self.games_played}, food_eaten={self.food_eaten}, " +
+                    f"average_length={self.average_length}, max_length={self.max_length}")
+                # reset statistics for next cycle
+                self.reset_statistics()
+                if not terminal:
+                    self.game.new_game()
 
     def optimizer_step(self):
         # need to sample from memory, and if memory doesn't contain at least our batch_size
@@ -142,48 +185,72 @@ class Agent:
         if len(self.memory) < self.batch_size:
             return
 
-        # random sample from memory
-        before, action, after, reward, terminal = self.memory.sample(
-            self.batch_size)
+        transitions = self.memory.sample(self.batch_size)
 
-        # before,after are [batch_size][input_size]
-        before_state_batch = torch.stack(before).to(device=device)
-        after_state_batch = torch.stack(after).to(device=device)
+        batch = Transition(*zip(*transitions))
 
-        #action is [batch_size][output_size]
-        action_batch = torch.stack(action).to(device=device)
+        # before/after are ((1,1,84,84)), so stacking gives (batch_size,1,1,84,84)
+        # therefore squeeze 1 dimension out
+        before_batch = torch.stack(batch.before_state).squeeze(
+            dim=1).to(device=self.device)
+        after_batch = torch.stack(batch.after_state).squeeze(
+            dim=1).to(device=self.device)
 
-        # reward,terminal are [batch_size]
-        reward_batch = torch.tensor(reward).to(device=device)
-        terminal_batch = torch.tensor(terminal).to(device=device)
+        # batch.action is tuple(int) in range of (0,3), so action_batch is [batch_size]
+        # however we want to index into before_batch with it, so we "unsqueeze"
+        # and add another dimension, so it is [batch_size][1]
+        action_batch = torch.Tensor(batch.action).type(torch.int64).unsqueeze(-1).to(
+            device=self.device)
 
-        # q_before/q_after is [batch_size][output_size]
-        q_before = torch.zeros((self.batch_size, 3))
-        q_after = torch.zeros((self.batch_size, 3))
+        # reward_batch is [batch_size]
+        reward_batch = torch.Tensor(batch.reward).to(device=self.device)
 
-        for i in range(self.batch_size):
-            q_before[i] = self.model(before_state_batch[i]).squeeze()
+        # terminal_batch is [batch_size] of bools, to mask q_after_max at end
+        terminal_batch = torch.BoolTensor(
+            batch.terminal).to(device=self.device)
+
+        # flip because each "terminal" is true when we DON'T want Q(s',a') in y_target
+        terminal_batch = ~terminal_batch
+
+        # q_before is a [batch_size][actions] of our initial predictions, in our case
+        # q_before is [batch_size][4], since we have 4 possible actions
+        q_before = self.model(before_batch).to(device=self.device)
+
+        # y_pred is what our model currently tells us about states, however we index
+        # into q_before with the action indexes we've _previously_ taken, because
+        # we know what the reward of that (state, action) was (Q(s,a)). For pytorch reasons,
+        # this is a [batch_size][1], so we squeeze() to get [batch_size]
+        y_pred = torch.gather(q_before, dim=1, index=action_batch).squeeze().to(
+            device=self.device)
+
         with torch.no_grad():
-            for i in range(self.batch_size):
-                q_after[i] = self.model(after_state_batch[i]).squeeze()
+            # calculate our after states
+            q_after = self.model(after_batch).to(device=self.device)
+            # get the max in every row
+            q_after_max, ind = torch.max(q_after, dim=1)
+            # mask the values when a (state, action) pair gave us a terminal state.
+            # q_after_max is [batch_size]
+            q_after_max = terminal_batch * q_after_max
 
-        # y_batch represents our target
-        y_batch = q_before.clone()
-        # Q(s,a) = r(s, a) + gamma * Q(s', a')
-        for i in range(self.batch_size):
-            y_batch[i][self.action_tensor_to_index(
-                action_batch[i])] = reward_batch[i] if terminal_batch[i] else reward_batch[i] + self.gamma * torch.max(q_after[i])
+        # if terminal:
+        # Q(s,a) = reward
+        # else:
+        # Q(s,a) = reward + gamma * Q(s', a')
+        # this is our target
+        y_target = reward_batch + self.gamma * q_after_max
 
-        loss = self.criterion(y_batch, q_before)
+        loss = self.criterion(y_pred, y_target)
 
         self.optimizer.zero_grad()
         # calculate the loss (MSE in this case) between our current prediction q_before
         # and our target y_batch
+
         loss.backward()
 
         self.optimizer.step()
 
     # just assumes you're saving models into ./model
+
     def load(self, step):
         folder = "./model"
         model_name = f"{step}_model"
@@ -246,10 +313,21 @@ class Agent:
         with open(params_file, "w") as out:
             json.dump(params, out)
 
-    def step(self):
-        self.current_step += 1
+    # play step will just infer best move and act accordingly, no memory or learning
+    def play_step(self):
+        # get our state
+        state_tensor = self.normalize_np_into_tensor(self.game.state)
+        # calculate our action tensor
+        action_tensor = torch.squeeze(
+            self.model(state_tensor)).to(device=self.device)
+        # determine our action
+        action = self.index_into_direction(
+            self.action_tensor_to_index(action_tensor))
+        # perform action
+        return self.game.game_tick(action)
 
-        before_direction = self.game.current_direction
+    def training_step(self):
+        self.current_step += 1
 
         # transform game state into a tensor with a consistent orientation
         before_state_tensor = self.normalize_np_into_tensor(
@@ -259,7 +337,8 @@ class Agent:
         action_tensor = self.get_action(before_state_tensor)
 
         # convert action_tensor into an action we can actually do in the game
-        action = self.tensor_to_action(action_tensor, before_direction)
+        action_index = self.action_tensor_to_index(action_tensor)
+        action = self.index_into_direction(action_index)
 
         # step once in the game, and get our reward
         reward = self.game.game_tick(action)
@@ -270,24 +349,11 @@ class Agent:
 
         terminal = True if reward < 0 else False
 
-        # we've eaten food this iteration
-        if reward > 0:
-            terminal = False
-            self.food_eaten += 1
-            self.length_this_game += 1
-        elif reward < 0:
-            terminal = True
-            self.games_played += 1
-            self.total_length += self.length_this_game
-            # calculate average now
-            self.average_length = self.total_length / self.games_played
-            # check if this is a new record
-            if self.length_this_game > self.max_length:
-                self.max_length = self.length_this_game
-            # reset current length
-            self.length_this_game = len(self.game.player)
-        else:
-            terminal = False
-
-        self.memory.push(before_state_tensor, action_tensor,
+        # save into our replay memory, for further training
+        self.memory.push(before_state_tensor, action_index,
                          after_state_tensor, reward, terminal)
+
+        # update our statistics
+        self.update_statistics(reward)
+
+        return terminal
