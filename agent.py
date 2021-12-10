@@ -28,7 +28,8 @@ class Memory:
 
 
 class Agent:
-    def __init__(self, e_init=0, e_final=0, e_iter=0, b_size=0, lr=0, gamma=0, max_mem=0, save_every=0, device="cpu"):
+    def __init__(self, e_init=0, e_final=0, e_iter=0, b_size=0, lr=0, gamma=0,
+                 max_mem=0, save_model_every=0, save_stats_every=0, device="cpu"):
         self.device = device
         self.model = model.Model().to(device=self.device)
         self.memory = Memory(max_mem=max_mem)
@@ -44,8 +45,8 @@ class Agent:
         self.gamma = gamma
         self.max_memory = max_mem
 
-        self.save_every = save_every
-
+        self.save_model_every = save_model_every
+        self.save_stats_every = save_stats_every
         # stats for json file etc
         self.games_played = 0
         self.food_eaten = 0
@@ -87,14 +88,25 @@ class Agent:
         self.average_length = 0
         self.max_length = 0
 
-    def get_action(self, state) -> torch.Tensor:
+    # idk figure this out
+    def calculate_loss(self):
+        pass
+
+    # expects (N,3,84,84) uint8 tensor
+    def predict(self, s: torch.Tensor) -> torch.Tensor:
+        model_input = s.to(dtype=torch.float32)
+
+        ret = torch.squeeze(self.model(model_input)).to(device=self.device)
+        return ret
+
+    def get_action(self, state: torch.Tensor) -> torch.Tensor:
         r = random.random()
         if r < self.epsilon:
             # return random tensor
-            ret = torch.rand(4, dtype=torch.float32).to(device=self.device)
+            ret = torch.rand(3, dtype=torch.float32).to(device=self.device)
         else:
             with torch.no_grad():
-                ret = torch.squeeze(self.model(state)).to(device=self.device)
+                ret = self.predict(state)
 
         # decrease epsilon if we are still above e_final
         if self.epsilon > self.epsilon_final:
@@ -103,28 +115,71 @@ class Agent:
 
         return ret
 
-    def normalize_np_into_tensor(self, inp: np.ndarray) -> torch.Tensor:
-        # maybe this is better, idk
-        out = torch.from_numpy(np.copy(inp)).to(device=self.device)
+    def get_state(self) -> torch.Tensor:
+        out = self.game.get_state_data().to(device=self.device)
+        if self.game.current_direction == snake.direction.UP:
+            pass
+        elif self.game.current_direction == snake.direction.LEFT:
+            out = torch.rot90(out, k=3, dims=(2, 3))
+
+        elif self.game.current_direction == snake.direction.DOWN:
+            out = torch.rot90(out, k=2, dims=(2, 3))
+
+        else:
+            out = torch.rot90(out, k=1, dims=(2, 3))
+
+        return out
+
+    def normalize_np_into_tensor(self) -> torch.Tensor:
+        # note that input array is uint8, cast it to float32 when its time to use it
+        out = torch.clone(self.game.state).to(device=self.device)
+
+        if self.game.current_direction == snake.direction.UP:
+            pass
+        elif self.game.current_direction == snake.direction.LEFT:
+            out = torch.rot90(out, k=3)
+
+        elif self.game.current_direction == snake.direction.DOWN:
+            out = torch.rot90(out, k=2)
+
+        else:
+            out = torch.rot90(out, k=1)
+
         out = torch.reshape(out, (1, 1, 84, 84))
+
+        # reshape to be in form pytorch expects
         return out
 
     def action_tensor_to_index(self, t: torch.Tensor) -> int:
         return torch.argmax(t).item()
 
     def index_into_direction(self, index: int) -> snake.direction:
-        if index == 0:
-            return snake.direction.LEFT
-        elif index == 1:
-            return snake.direction.UP
-        elif index == 2:
-            return snake.direction.RIGHT
-        elif index == 3:
-            return snake.direction.DOWN
+
+        # if index is 1, just keep going in same direction
+        if index == 1:
+            return self.game.current_direction
+        elif index == 0:
+            if self.game.current_direction == snake.direction.UP:
+                return snake.direction.LEFT
+            elif self.game.current_direction == snake.direction.LEFT:
+                return snake.direction.DOWN
+            elif self.game.current_direction == snake.direction.DOWN:
+                return snake.direction.RIGHT
+            else:
+                return snake.direction.UP
+        else:
+            if self.game.current_direction == snake.direction.UP:
+                return snake.direction.RIGHT
+            elif self.game.current_direction == snake.direction.RIGHT:
+                return snake.direction.DOWN
+            elif self.game.current_direction == snake.direction.DOWN:
+                return snake.direction.LEFT
+            else:
+                return snake.direction.UP
 
     def train_step(self):
         self.training_step()
-        self.optimizer_step()
+        self.optimizer_step(self.batch_size)
 
     def play(self):
         play_steps = 0
@@ -162,13 +217,15 @@ class Agent:
             if (draw):
                 self.game.draw_game()
             # if we are saving this iteration
-            if self.current_step % self.save_every == 0:
+
+            if self.current_step % self.save_stats_every == 0:
                 # if we just died, don't "forcefully" end the game
                 if not terminal:
                     self.update_statistics(-1)
 
-                # save everything
-                self.save()
+                # save stats now
+                self.save_stats()
+
                 now = datetime.now()
                 current_time = now.strftime("%H:%M:%S")
                 print(
@@ -176,25 +233,29 @@ class Agent:
                     f"average_length={self.average_length}, max_length={self.max_length}")
                 # reset statistics for next cycle
                 self.reset_statistics()
+
                 if not terminal:
                     self.game.new_game()
 
-    def optimizer_step(self):
+            if self.current_step % self.save_model_every == 0:
+                self.save_model()
+
+    def optimizer_step(self, size: int):
         # need to sample from memory, and if memory doesn't contain at least our batch_size
         # we can't really do anything
-        if len(self.memory) < self.batch_size:
+        if len(self.memory) < size:
             return
 
-        transitions = self.memory.sample(self.batch_size)
+        transitions = self.memory.sample(size)
 
         batch = Transition(*zip(*transitions))
 
         # before/after are ((1,1,84,84)), so stacking gives (batch_size,1,1,84,84)
         # therefore squeeze 1 dimension out
         before_batch = torch.stack(batch.before_state).squeeze(
-            dim=1).to(device=self.device)
+            dim=1).to(device=self.device, dtype=torch.float32)
         after_batch = torch.stack(batch.after_state).squeeze(
-            dim=1).to(device=self.device)
+            dim=1).to(device=self.device, dtype=torch.float32)
 
         # batch.action is tuple(int) in range of (0,3), so action_batch is [batch_size]
         # however we want to index into before_batch with it, so we "unsqueeze"
@@ -213,8 +274,8 @@ class Agent:
         terminal_batch = ~terminal_batch
 
         # q_before is a [batch_size][actions] of our initial predictions, in our case
-        # q_before is [batch_size][4], since we have 4 possible actions
-        q_before = self.model(before_batch).to(device=self.device)
+        # q_before is [batch_size][3], since we have 3 possible actions
+        q_before = self.predict(before_batch).to(device=self.device)
 
         # y_pred is what our model currently tells us about states, however we index
         # into q_before with the action indexes we've _previously_ taken, because
@@ -223,14 +284,14 @@ class Agent:
         y_pred = torch.gather(q_before, dim=1, index=action_batch).squeeze().to(
             device=self.device)
 
-        with torch.no_grad():
-            # calculate our after states
-            q_after = self.model(after_batch).to(device=self.device)
-            # get the max in every row
-            q_after_max, ind = torch.max(q_after, dim=1)
-            # mask the values when a (state, action) pair gave us a terminal state.
-            # q_after_max is [batch_size]
-            q_after_max = terminal_batch * q_after_max
+       # calculate our after states
+        q_after = self.predict(after_batch).detach().to(
+            device=self.device)
+        # get the max in every row
+        q_after_max, ind = torch.max(q_after, dim=1)
+        # mask the values when a (state, action) pair gave us a terminal state.
+        # q_after_max is [batch_size]
+        q_after_max = terminal_batch * q_after_max
 
         # if terminal:
         # Q(s,a) = reward
@@ -242,16 +303,16 @@ class Agent:
         loss = self.criterion(y_pred, y_target)
 
         self.optimizer.zero_grad()
-        # calculate the loss (MSE in this case) between our current prediction q_before
-        # and our target y_batch
 
         loss.backward()
 
         self.optimizer.step()
 
+        return loss
+
     # just assumes you're saving models into ./model
 
-    def load(self, step):
+    def load_model(self, step):
         folder = "./model"
         model_name = f"{step}_model"
         optim_name = f"{step}_opt"
@@ -274,7 +335,27 @@ class Agent:
 
         self.memory = Memory(self.max_memory)
 
-    def save(self):
+    def save_stats(self):
+        folder = "./model/stats"
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+
+        stats = {}
+        stats['step'] = self.current_step
+        stats['games_played'] = self.games_played
+        stats['food_eaten'] = self.food_eaten
+        stats['total_length'] = self.total_length
+        stats['average_length'] = self.average_length
+        stats['max_length'] = self.max_length
+
+        stats_name = f"{self.current_step}_stats.json"
+
+        stats_file = os.path.join(folder, stats_name)
+
+        with open(stats_file, "w") as s:
+            json.dump(stats, s)
+
+    def save_model(self):
         folder = "./model"
 
         if not os.path.exists(folder):
@@ -300,14 +381,8 @@ class Agent:
         params['lr'] = self.lr
         params['batch_size'] = self.batch_size
         params['max_memory'] = self.max_memory
-        params['save_every'] = self.save_every
-
-        params['games_played'] = self.games_played
-        params['food_eaten'] = self.food_eaten
-
-        params['total_length'] = self.total_length
-        params['average_length'] = self.average_length
-        params['max_length'] = self.max_length
+        params['save_model_every'] = self.save_model_every
+        params['save_stats_every'] = self.save_stats_every
 
         params_file = os.path.join(folder, params_name)
         with open(params_file, "w") as out:
@@ -316,13 +391,14 @@ class Agent:
     # play step will just infer best move and act accordingly, no memory or learning
     def play_step(self):
         # get our state
-        state_tensor = self.normalize_np_into_tensor(self.game.state)
-        # calculate our action tensor
-        action_tensor = torch.squeeze(
-            self.model(state_tensor)).to(device=self.device)
+        state_tensor = self.get_state()
+
+        action_tensor = self.predict(state_tensor)
+
         # determine our action
         action = self.index_into_direction(
             self.action_tensor_to_index(action_tensor))
+
         # perform action
         return self.game.game_tick(action)
 
@@ -330,8 +406,7 @@ class Agent:
         self.current_step += 1
 
         # transform game state into a tensor with a consistent orientation
-        before_state_tensor = self.normalize_np_into_tensor(
-            self.game.state)
+        before_state_tensor = self.get_state()
 
         # get our action tensor, either random tensor or output from model
         action_tensor = self.get_action(before_state_tensor)
@@ -344,8 +419,7 @@ class Agent:
         reward = self.game.game_tick(action)
 
         # get next state tensor
-        after_state_tensor = self.normalize_np_into_tensor(
-            self.game.state)
+        after_state_tensor = self.get_state()
 
         terminal = True if reward < 0 else False
 

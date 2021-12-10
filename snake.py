@@ -2,6 +2,7 @@ import pygame
 import random
 from enum import Enum
 import numpy as np
+import torch
 
 # globals because lazy
 # game is 32 x 32 rectangles
@@ -24,10 +25,10 @@ class direction(Enum):
 
 
 class cell(Enum):
-    BG = 0.0
-    SNAKE = 1.0
-    HEAD = 2.0
-    FOOD = 3.0
+    BG = 0
+    SNAKE = 1
+    HEAD = 2
+    FOOD = 3
 
 
 class rect:
@@ -54,8 +55,8 @@ class player:
     def restart(self):
         x = int(grid_size/2)
         y = int(grid_size/2)
-        self.body = [rect(x, y), rect(x, y-1), rect(x, y-2)
-                     ]
+        self.body = [rect(x, y), rect(x, y-1), rect(x, y-2),
+                     rect(x, y-3), rect(x, y-4)]
 
     # head is always first element of body
     def head(self) -> rect:
@@ -77,7 +78,8 @@ class player:
 
 class game:
     def __init__(self):
-        self.state = np.zeros((grid_size, grid_size), dtype=np.float32)
+        # use np.uint8 for size
+        self.state = torch.zeros((grid_size, grid_size), dtype=torch.uint8)
         self.screen = pygame.display.set_mode(size)
         self.player = player()
         self.current_direction = direction.DOWN
@@ -90,6 +92,23 @@ class game:
     def generate_food(self):
         for i in range(food_start):
             self.new_food()
+
+    def get_state_data(self):
+        ret = torch.zeros((1, 3, 84, 84), dtype=torch.uint8)
+
+        # add snake info
+        for part in self.player.body:
+            ret[0][0][part.x][part.y] = 1
+
+        # add head layer
+        head = self.player.head()
+        ret[0][1][head.x][head.y] = 1
+
+        # add food
+        for f in self.food_list:
+            ret[0][2][f.x][f.y] = 1
+
+        return ret
 
     def draw_game(self):
         self.screen.fill(black)
@@ -124,7 +143,16 @@ class game:
         head = self.player.head()
         game_over = False
         eat = False
-        win = False
+
+        # check to see if we're eating something this tick
+        if head in self.food_list:
+            self.food_list.remove(head)
+            eat = True
+
+        # if we don't eat, we must pop off player.body
+        if not eat:
+            self.player.body.pop()
+
         # if we've run into wall
         if head.x > grid_size - 1 or head.x < 0 or head.y > grid_size - 1 or head.y < 0:
             game_over = True
@@ -134,38 +162,21 @@ class game:
             if head == part:
                 game_over = True
 
-        if head in self.food_list:
-            self.food_list.remove(head)
-            eat = True
-
-        if game_over:
-            self.new_game()
-        else:
-            if eat:
-                if len(self.food_list) == 0:
-                    win = True
-                    # self.new_food()
-            else:
-                # if we don't eat, we must pop off player.body
-                self.player.body.pop()
-
-        self.fill_state()
-
         # calculate reward
         if game_over:
-            reward = - (len(self.player) - 2)
+            reward = -1
+            self.new_game()
         elif eat:
-            reward = food_start - len(self.food_list)
+            reward = 1
         else:
             reward = 0
 
-        if win:
-            self.generate_food()
+        self.fill_state()
 
         return reward
 
     def fill_state(self):
-        self.state.fill(cell.BG.value)
+        self.state.fill_(cell.BG.value)
 
         for food in self.food_list:
             self.state[food.x][food.y] = cell.FOOD.value
