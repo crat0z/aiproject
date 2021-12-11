@@ -1,7 +1,6 @@
 import pygame
 import random
 from enum import Enum
-import numpy as np
 import torch
 
 # globals because lazy
@@ -11,7 +10,8 @@ rect_size = 15
 grid_size = int(width / rect_size)
 
 black = 0, 0, 0
-green = 0, 255, 0
+green = 157, 255, 100
+head = 0, 255, 0
 yellow = 255, 255, 0
 
 food_start = 50
@@ -80,14 +80,13 @@ class game:
     def __init__(self):
         # use np.uint8 for size
         self.state = torch.zeros((grid_size, grid_size), dtype=torch.uint8)
-        self.screen = pygame.display.set_mode(size)
         self.player = player()
         self.current_direction = direction.DOWN
-        self.clock = pygame.time.Clock()
 
         self.food_list = []
         # call new_game() so state is not zero
         self.new_game()
+        self.drawing = False
 
     def generate_food(self):
         for i in range(food_start):
@@ -111,14 +110,23 @@ class game:
         return ret
 
     def draw_game(self):
+        if self.drawing == False:
+            self.drawing = True
+            self.screen = pygame.display.set_mode(size)
+            self.clock = pygame.time.Clock()
+
+        self.fill_state()
+
         self.screen.fill(black)
         for x in range(grid_size):
             for y in range(grid_size):
                 color = 0, 0, 0
                 if self.state[x][y] == cell.BG.value:
                     color = black
-                elif self.state[x][y] == cell.SNAKE.value or self.state[x][y] == cell.HEAD.value:
+                elif self.state[x][y] == cell.SNAKE.value:
                     color = green
+                elif self.state[x][y] == cell.HEAD.value:
+                    color = head
                 else:  # food case
                     color = yellow
                 pygame.draw.rect(self.screen, color, pygame.Rect(
@@ -148,6 +156,8 @@ class game:
         if head in self.food_list:
             self.food_list.remove(head)
             eat = True
+            if not self.food_list:
+                self.generate_food()
 
         # if we don't eat, we must pop off player.body
         if not eat:
@@ -170,8 +180,6 @@ class game:
             reward = 1
         else:
             reward = 0
-
-        self.fill_state()
 
         return reward
 

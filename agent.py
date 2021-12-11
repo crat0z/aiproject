@@ -1,7 +1,6 @@
 from collections import deque, namedtuple
 from datetime import datetime
 import random
-import numpy as np
 import os
 import json
 import torch
@@ -57,7 +56,7 @@ class Agent:
 
         self.optimizer = torch.optim.Adam(
             self.model.parameters(), lr=self.lr)
-        self.criterion = torch.nn.MSELoss()
+        self.criterion = torch.nn.HuberLoss()
         self.training = False
 
         for param in self.model.parameters():
@@ -94,7 +93,7 @@ class Agent:
 
     # expects (N,3,84,84) uint8 tensor
     def predict(self, s: torch.Tensor) -> torch.Tensor:
-        model_input = s.to(dtype=torch.float32)
+        model_input = s.to(dtype=torch.float32, device=self.device)
 
         ret = torch.squeeze(self.model(model_input)).to(device=self.device)
         return ret
@@ -103,7 +102,7 @@ class Agent:
         r = random.random()
         if r < self.epsilon:
             # return random tensor
-            ret = torch.rand(3, dtype=torch.float32).to(device=self.device)
+            ret = torch.rand(3, dtype=torch.float32)
         else:
             with torch.no_grad():
                 ret = self.predict(state)
@@ -128,26 +127,6 @@ class Agent:
         else:
             out = torch.rot90(out, k=1, dims=(2, 3))
 
-        return out
-
-    def normalize_np_into_tensor(self) -> torch.Tensor:
-        # note that input array is uint8, cast it to float32 when its time to use it
-        out = torch.clone(self.game.state).to(device=self.device)
-
-        if self.game.current_direction == snake.direction.UP:
-            pass
-        elif self.game.current_direction == snake.direction.LEFT:
-            out = torch.rot90(out, k=3)
-
-        elif self.game.current_direction == snake.direction.DOWN:
-            out = torch.rot90(out, k=2)
-
-        else:
-            out = torch.rot90(out, k=1)
-
-        out = torch.reshape(out, (1, 1, 84, 84))
-
-        # reshape to be in form pytorch expects
         return out
 
     def action_tensor_to_index(self, t: torch.Tensor) -> int:
@@ -181,14 +160,21 @@ class Agent:
         self.training_step()
         self.optimizer_step(self.batch_size)
 
-    def play(self):
+    def play(self, print_action=False, tickrate=20):
+
+        pygame.init()
+
         play_steps = 0
         while True:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        self.game.new_game()
+
             play_steps += 1
-            reward = self.play_step()
+            reward = self.play_step(print_action)
             self.game.draw_game()
             terminal = False if reward >= 0 else True
 
@@ -200,9 +186,14 @@ class Agent:
             else:
                 self.update_statistics(reward)
 
-            self.game.clock.tick(20)
+            self.game.clock.tick(tickrate)
 
     def train(self, draw=True):
+
+        now = datetime.now()
+        current_time = now.strftime("%H:%M:%S")
+
+        print(f"training, start time: {current_time}")
 
         if draw:
             pygame.init()
@@ -250,12 +241,11 @@ class Agent:
 
         batch = Transition(*zip(*transitions))
 
-        # before/after are ((1,1,84,84)), so stacking gives (batch_size,1,1,84,84)
-        # therefore squeeze 1 dimension out
-        before_batch = torch.stack(batch.before_state).squeeze(
-            dim=1).to(device=self.device, dtype=torch.float32)
-        after_batch = torch.stack(batch.after_state).squeeze(
-            dim=1).to(device=self.device, dtype=torch.float32)
+        # before/after are ((1,3,84,84)), so torch.cat gives us ((batch_size, 3, 84, 84))
+        before_batch = torch.cat(
+            batch.before_state).to_dense().to(device=self.device)
+        after_batch = torch.cat(
+            batch.after_state).to_dense().to(device=self.device)
 
         # batch.action is tuple(int) in range of (0,3), so action_batch is [batch_size]
         # however we want to index into before_batch with it, so we "unsqueeze"
@@ -326,8 +316,9 @@ class Agent:
             print("model files not found.")
             return
 
-        self.model.load_state_dict(torch.load(model_file))
-        self.optimizer.load_state_dict(torch.load(optim_file))
+        self.model.load_state_dict(torch.load(model_file, map_location='cpu'))
+        self.optimizer.load_state_dict(
+            torch.load(optim_file, map_location='cpu'))
         with open(params_file, 'r') as f:
             params = json.load(f)
             for key in params:
@@ -389,16 +380,25 @@ class Agent:
             json.dump(params, out)
 
     # play step will just infer best move and act accordingly, no memory or learning
-    def play_step(self):
+    def play_step(self, print_action):
         # get our state
         state_tensor = self.get_state()
 
         action_tensor = self.predict(state_tensor)
-
+        action_index = self.action_tensor_to_index(action_tensor)
         # determine our action
-        action = self.index_into_direction(
-            self.action_tensor_to_index(action_tensor))
+        action = self.index_into_direction(action_index)
 
+        if print_action:
+            if action_index == 0:
+                action_str = "turn left"
+            elif action_index == 1:
+                action_str = "go straight"
+            else:
+                action_str = "turn right"
+
+            print("[{:.3f},{:.3f},{:.3f}] -> {}".format(action_tensor[0],
+                  action_tensor[1], action_tensor[2], action_str))
         # perform action
         return self.game.game_tick(action)
 
@@ -424,8 +424,8 @@ class Agent:
         terminal = True if reward < 0 else False
 
         # save into our replay memory, for further training
-        self.memory.push(before_state_tensor, action_index,
-                         after_state_tensor, reward, terminal)
+        self.memory.push(before_state_tensor.to_sparse(), action_index,
+                         after_state_tensor.to_sparse(), reward, terminal)
 
         # update our statistics
         self.update_statistics(reward)
