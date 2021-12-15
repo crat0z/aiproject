@@ -1,6 +1,5 @@
-import numpy
 import agent
-from datetime import datetime
+
 # hyperparameters
 max_memory = 1000000
 # initial epsilon, if rand() < epsilon, a random action is taken

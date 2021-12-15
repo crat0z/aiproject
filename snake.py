@@ -1,4 +1,4 @@
-import pygame
+# import pygame
 import random
 from enum import Enum
 import torch
@@ -109,13 +109,33 @@ class game:
 
         return ret
 
-    def draw_game(self):
+    def rotate_view(self):
+        # i may have gotten the rotations wrong for the training..
+        # nonetheless, the model still performs well. and not enough time to retrain.
+        if self.current_direction == direction.UP:
+            pass
+        elif self.current_direction == direction.LEFT:
+            self.state = torch.rot90(self.state, k=1)
+
+        elif self.current_direction == direction.DOWN:
+            self.state = torch.rot90(self.state, k=2)
+
+        else:
+            self.state = torch.rot90(self.state, k=3)
+
+    def draw_game(self, rotate):
         if self.drawing == False:
             self.drawing = True
+
+            import pygame
+
             self.screen = pygame.display.set_mode(size)
             self.clock = pygame.time.Clock()
 
         self.fill_state()
+
+        if rotate:
+            self.rotate_view()
 
         self.screen.fill(black)
         for x in range(grid_size):
@@ -194,28 +214,6 @@ class game:
 
         head = self.player.head()
         self.state[head.x][head.y] = cell.HEAD.value
-
-    def play_game_tick(self):
-        # get input
-        next_direction = self.current_direction
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                exit(0)
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_w:
-                    next_direction = direction.UP
-                elif event.key == pygame.K_a:
-                    next_direction = direction.LEFT
-                elif event.key == pygame.K_s:
-                    next_direction = direction.DOWN
-                elif event.key == pygame.K_e:
-                    next_direction = direction.RIGHT
-
-        self.game_tick(next_direction)
-
-        self.draw_game()
-
-        self.clock.tick(20)
 
     def new_game(self):
         self.player.restart()

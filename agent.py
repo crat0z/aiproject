@@ -6,7 +6,6 @@ import json
 import torch
 import model
 import snake
-import pygame
 
 Transition = namedtuple(
     'Transition', ('before_state', 'action', 'after_state', 'reward', 'terminal'))
@@ -56,7 +55,13 @@ class Agent:
 
         self.optimizer = torch.optim.Adam(
             self.model.parameters(), lr=self.lr)
-        self.criterion = torch.nn.HuberLoss()
+
+        try:
+            self.criterion = torch.nn.HuberLoss()
+        except:
+            print("Seems like your PyTorch does not have HuberLoss, will use MSE instead")
+            self.criterion = torch.nn.MSELoss()
+
         self.training = False
 
         for param in self.model.parameters():
@@ -87,17 +92,14 @@ class Agent:
         self.average_length = 0
         self.max_length = 0
 
-    # idk figure this out
-    def calculate_loss(self):
-        pass
-
-    # expects (N,3,84,84) uint8 tensor
+    # takes (N, 3, 84, 84) uint8 Tensor -> (3) action Tensor
     def predict(self, s: torch.Tensor) -> torch.Tensor:
         model_input = s.to(dtype=torch.float32, device=self.device)
 
         ret = torch.squeeze(self.model(model_input)).to(device=self.device)
         return ret
 
+    # epsilon greedy
     def get_action(self, state: torch.Tensor) -> torch.Tensor:
         r = random.random()
         if r < self.epsilon:
@@ -114,6 +116,10 @@ class Agent:
 
         return ret
 
+    # gets game state, and rotates the 2d array depending on which way the agent
+    # is currently facing. i'm not sure if this makes it easier to train,
+    # but at the time it seemed like a good idea. it also makes it so we only
+    # need 3 outputs from model (turn left, go forward, turn right)
     def get_state(self) -> torch.Tensor:
         out = self.game.get_state_data().to(device=self.device)
         if self.game.current_direction == snake.direction.UP:
@@ -160,7 +166,10 @@ class Agent:
         self.training_step()
         self.optimizer_step(self.batch_size)
 
-    def play(self, print_action=False, tickrate=20):
+    def play(self, print_action=False, tickrate=20, rotate=False):
+
+        # import here so we don't need pygame to just train.
+        import pygame
 
         pygame.init()
 
@@ -173,20 +182,22 @@ class Agent:
                     if event.key == pygame.K_ESCAPE:
                         self.game.new_game()
 
+            self.game.draw_game(rotate)
+
             play_steps += 1
-            reward = self.play_step(print_action)
-            self.game.draw_game()
+
+            reward = self.play_step(print_action, tickrate)
+
             terminal = False if reward >= 0 else True
 
             # if we just died, print stats about this run
             if terminal:
-                print(f"steps: {play_steps}, length: {self.length_this_game}")
+                print(
+                    f"steps: {play_steps}, food eaten: {self.length_this_game}")
                 play_steps = 0
                 self.reset_statistics()
             else:
                 self.update_statistics(reward)
-
-            self.game.clock.tick(tickrate)
 
     def train(self, draw=True):
 
@@ -196,6 +207,7 @@ class Agent:
         print(f"training, start time: {current_time}")
 
         if draw:
+            import pygame
             pygame.init()
         while True:
             if draw:
@@ -316,9 +328,10 @@ class Agent:
             print("model files not found.")
             return
 
-        self.model.load_state_dict(torch.load(model_file, map_location='cpu'))
+        self.model.load_state_dict(torch.load(
+            model_file, map_location=self.device))
         self.optimizer.load_state_dict(
-            torch.load(optim_file, map_location='cpu'))
+            torch.load(optim_file, map_location=self.device))
         with open(params_file, 'r') as f:
             params = json.load(f)
             for key in params:
@@ -380,7 +393,7 @@ class Agent:
             json.dump(params, out)
 
     # play step will just infer best move and act accordingly, no memory or learning
-    def play_step(self, print_action):
+    def play_step(self, print_action, tick_rate):
         # get our state
         state_tensor = self.get_state()
 
@@ -399,7 +412,11 @@ class Agent:
 
             print("[{:.3f},{:.3f},{:.3f}] -> {}".format(action_tensor[0],
                   action_tensor[1], action_tensor[2], action_str))
-        # perform action
+
+        # wait for next tick, after printing action. that way the viewer can see the tensor
+        # and watch it take its step.
+        self.game.clock.tick(tick_rate)
+
         return self.game.game_tick(action)
 
     def training_step(self):
