@@ -60,8 +60,9 @@ class Agent:
         try:
             self.criterion = torch.nn.HuberLoss()
         except:
-            print("Seems like your PyTorch does not have HuberLoss, will use MSE instead")
-            self.criterion = torch.nn.MSELoss()
+            print(
+                "Your Pytorch does not support HuberLoss. Will use SmoothL1Loss instead")
+            self.criterion = torch.nn.SmoothL1Loss()
 
         self.training = False
 
