@@ -2,6 +2,7 @@
 import random
 from enum import Enum
 import torch
+import pygame
 
 # globals because lazy
 # game is 32 x 32 rectangles
@@ -126,8 +127,6 @@ class game:
     def draw_game(self, rotate):
         if self.drawing == False:
             self.drawing = True
-
-            import pygame
 
             self.screen = pygame.display.set_mode(size)
             self.clock = pygame.time.Clock()

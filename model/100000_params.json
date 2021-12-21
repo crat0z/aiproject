@@ -1,0 +1,1 @@
+{"gamma": 0.98, "current_step": 100000, "epsilon_initial": 0.99, "epsilon_final": 0.1, "epsilon": 0.9009999999968856, "epsilon_iterations": 1000000, "lr": 2e-05, "batch_size": 32, "max_memory": 1000000, "save_model_every": 100000, "save_stats_every": 25000}

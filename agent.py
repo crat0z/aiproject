@@ -6,6 +6,7 @@ import json
 import torch
 import model
 import snake
+import pygame
 
 Transition = namedtuple(
     'Transition', ('before_state', 'action', 'after_state', 'reward', 'terminal'))
@@ -168,9 +169,6 @@ class Agent:
 
     def play(self, print_action=False, tickrate=20, rotate=False):
 
-        # import here so we don't need pygame to just train.
-        import pygame
-
         pygame.init()
 
         play_steps = 0
@@ -207,8 +205,8 @@ class Agent:
         print(f"training, start time: {current_time}")
 
         if draw:
-            import pygame
             pygame.init()
+
         while True:
             if draw:
                 for event in pygame.event.get():
